@@ -8,6 +8,50 @@ import numpy as np
 from sklearn.metrics import roc_auc_score
 
 
+def report(summary, run):
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    if not summary:
+        print('No AUROC values: each group needs both Real and Fake scores.')
+        return
+    generators = sorted({row['generator'] for row in summary})
+    views = sorted({row['view'] for row in summary})
+    figures = run / 'figures'
+    figures.mkdir(exist_ok=True)
+    for view in views:
+        entries = [row for row in summary if row['view'] == view]
+        methods = sorted({row['metric'] for row in entries})
+        lookup = {(row['metric'], row['generator']): row['auroc_fake_high'] for row in entries}
+        matrix = np.array([[lookup.get((method, generator), np.nan) for generator in generators] for method in methods])
+        means = [float(np.mean(row)) if np.isfinite(row).all() else float('nan') for row in matrix]
+        widths = [max(len(g), 6) for g in generators]
+        print(f'\n{view}  (AUROC: Fake score higher; macro mean requires all generators)')
+        print(f"{'Metric':<18} " + ' '.join(f'{g:>{w}}' for g, w in zip(generators, widths)) + '   Mean')
+        for method, values, mean in zip(methods, matrix, means):
+            cells = [f'{v:.3f}' if np.isfinite(v) else '-' for v in values]
+            mean_text = f'{mean:.3f}' if np.isfinite(mean) else '-'
+            print(f'{method:<18} ' + ' '.join(f'{cell:>{w}}' for cell, w in zip(cells, widths)) + f' {mean_text:>6}')
+        with (run / f'auroc_{view}.csv').open('w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow(['metric', *generators, 'macro_mean'])
+            for method, values, mean in zip(methods, matrix, means):
+                writer.writerow([method, *[f'{x:.6f}' if np.isfinite(x) else '' for x in values], f'{mean:.6f}' if np.isfinite(mean) else ''])
+        fig, ax = plt.subplots(figsize=(max(7, len(generators) * 1.3), max(3, len(methods) * .5 + 1.5)))
+        image = ax.imshow(np.ma.masked_invalid(matrix), cmap='RdBu_r', vmin=0, vmax=1, aspect='auto')
+        ax.set_xticks(range(len(generators)), generators, rotation=35, ha='right')
+        ax.set_yticks(range(len(methods)), methods)
+        ax.set_title(f'{view}: AUROC (Fake score higher)')
+        for i, row in enumerate(matrix):
+            for j, value in enumerate(row):
+                ax.text(j, i, f'{value:.2f}' if np.isfinite(value) else '-', ha='center', va='center', color='white' if np.isfinite(value) and (value < .25 or value > .75) else 'black')
+        fig.colorbar(image, ax=ax, label='AUROC')
+        fig.tight_layout()
+        fig.savefig(figures / f'auroc_{view}.png', dpi=160)
+        plt.close(fig)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--run', required=True)
@@ -46,6 +90,7 @@ def main():
         writer.writeheader()
         writer.writerows(correlations)
     print(f'Wrote {len(summary)} AUROC rows and {len(correlations)} correlations')
+    report(summary, run)
 
 
 if __name__ == '__main__':
