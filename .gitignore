@@ -6,3 +6,4 @@ results/
 *.pt
 *.ckpt
 *.safetensors
+README.md
