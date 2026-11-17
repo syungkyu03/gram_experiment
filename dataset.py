@@ -18,15 +18,15 @@ def select_images(root, samples, seed, generators='all'):
             continue
         parts = path.relative_to(root).parts
         for i, part in enumerate(parts[:-1]):
-            label = part.lower()
-            if label in ('real', 'fake') and i > 0:
+            label = {'nature': 'real', 'ai': 'fake'}.get(part.lower())
+            if label and i > 0 and 'val' in [p.lower() for p in parts[1:i]]:
                 generator = parts[0]
                 if generators == 'all' or generator in generators.split(','):
                     class_name = parts[i + 1] if i + 2 < len(parts) else ''
                     groups[(generator, label)].append((path, class_name))
                 break
     if not groups:
-        raise ValueError('No images found under generator/.../real or fake directories: ' + str(root))
+        raise ValueError('No images found under generator/val/ai or nature directories: ' + str(root))
     rng = random.Random(seed)
     rows = []
     for generator in sorted({g for g, _ in groups}):

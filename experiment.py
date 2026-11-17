@@ -15,7 +15,7 @@ from transforms import transform
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('--name', required=True)
-    p.add_argument('--data-root', required=True)
+    p.add_argument('--data-root', default='/data/AIGI/GenImage')
     p.add_argument('--repo', required=True, help='Local DINOv3 torch.hub repository')
     p.add_argument('--model', required=True, help='DINOv3 torch.hub entry point')
     p.add_argument('--weights', required=True)

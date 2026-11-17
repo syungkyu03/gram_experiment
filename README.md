@@ -2,10 +2,10 @@
 
 서버의 기존 DINOv3 저장소와 가중치를 사용한다. Python 패키지: torch, numpy, Pillow, scikit-learn. VAE 사용 시 diffusers와 해당 의존성이 추가로 필요하다. 모델 저장소의 환경 요구사항도 설치해야 한다.
 
-데이터 경로는 `DATA_ROOT/GENERATOR/.../real/...` 및 `DATA_ROOT/GENERATOR/.../fake/...` 형태로 가정한다. 실 데이터의 디렉터리와 라벨을 먼저 확인해야 한다. 각 라벨에서 독립적으로 표본을 뽑으므로 ImageNet 클래스 균형은 자동으로 맞추지 않는다. 중복 Real 이미지도 재사용하지 않는다.
+기본 데이터 경로는 `/data/AIGI/GenImage`이다. `GENERATOR/val/ai`는 Fake, `GENERATOR/val/nature`는 Real로 읽는다. 이미지가 각 폴더에 평평하게 놓여 있으므로 클래스 정보는 기록되지 않는다. 각 라벨에서 독립적으로 표본을 뽑으므로 ImageNet 클래스 균형은 자동으로 맞추지 않는다. 중복 Real 이미지도 재사용하지 않는다. 다른 데이터 경로가 필요하면 `--data-root`로 지정할 수 있다.
 
 ```bash
-python experiment.py --name pilot_01 --data-root /data/GenImage --repo /path/to/dinov3 --model MODEL_ENTRY --weights /path/to/weights.pth --samples 50 --size 512 --device cuda:0
+python experiment.py --name pilot_01 --repo /path/to/dinov3 --model MODEL_ENTRY --weights /path/to/weights.pth --samples 50 --size 512 --device cuda:0
 python analyze.py --run results/pilot_01
 ```
 
