@@ -4,21 +4,20 @@ import json
 from pathlib import Path
 
 import torch
+from dotenv import load_dotenv
 from torch.utils.data import DataLoader
 
-from backbone import Backbone
+from backbone import Backbone, MODEL_ID, REVISION
 from dataset import Images, select_images
 from metrics import gram, scores, static_score
 from transforms import transform
 
 
 def main():
+    load_dotenv(Path(__file__).resolve().parent / '.env')
     p = argparse.ArgumentParser()
     p.add_argument('--name', required=True)
     p.add_argument('--data-root', default='/data/AIGI/GenImage')
-    p.add_argument('--repo', required=True, help='Local DINOv3 torch.hub repository')
-    p.add_argument('--model', required=True, help='DINOv3 torch.hub entry point')
-    p.add_argument('--weights', required=True)
     p.add_argument('--vae-path', help='Local diffusers VAE directory')
     p.add_argument('--samples', type=int, default=50, help='Per generator and real/fake label')
     p.add_argument('--generators', default='all')
@@ -46,12 +45,12 @@ def main():
     rows = select_images(args.data_root, args.samples, args.seed, args.generators)
     output = Path('results') / args.name
     output.mkdir(parents=True, exist_ok=False)
-    (output / 'config.json').write_text(json.dumps(vars(args), indent=2), encoding='utf-8')
+    (output / 'config.json').write_text(json.dumps({**vars(args), 'model_id': MODEL_ID, 'model_revision': REVISION}, indent=2), encoding='utf-8')
     with (output / 'manifest.csv').open('w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=['path', 'generator', 'label', 'class_name'])
         writer.writeheader()
         writer.writerows(rows)
-    model = Backbone(args.repo, args.model, args.weights, args.device)
+    model = Backbone(args.device)
     vae = None
     if 'vae' in views:
         from diffusers import AutoencoderKL

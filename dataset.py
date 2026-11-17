@@ -2,7 +2,7 @@ from pathlib import Path
 import random
 from collections import defaultdict
 
-from PIL import Image
+from PIL import Image, ImageOps
 from torch.utils.data import Dataset
 import numpy as np
 import torch
@@ -48,6 +48,6 @@ class Images(Dataset):
 
     def __getitem__(self, index):
         with Image.open(self.rows[index]['path']) as image:
-            image = image.convert('RGB').resize((self.size, self.size), Image.Resampling.BICUBIC)
+            image = ImageOps.exif_transpose(image).convert('RGB').resize((self.size, self.size), Image.Resampling.BICUBIC)
             array = np.array(image, dtype=np.float32) / 255.0
         return index, torch.from_numpy(array).permute(2, 0, 1)
