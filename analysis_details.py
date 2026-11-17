@@ -38,7 +38,7 @@ def detailed_analysis(run, rows, metrics, repeats, seed):
              'missing_rows': len(expected - actual.keys()), 'unexpected_rows': len(actual.keys() - expected),
              'duplicate_rows': sum(n - 1 for n in actual.values() if n > 1),
              'duplicate_manifest_rows': len(manifest) - len({key(r) for r in manifest}),
-             'nonfinite_or_missing': {metric: sum(number(r, metric) is None for r in rows if metric not in ('gram_aa', 'gram_ab', 'gram_bb') or r['view'] == 'local_noise') for metric in metrics}}
+             'nonfinite_or_missing': {metric: sum(number(r, metric) is None for r in rows if metric not in ('gram_aa', 'gram_ab', 'gram_bb', 'patch_change_a', 'patch_change_b') or r['view'] in ('local_noise', 'rigid_local_noise')) for metric in metrics}}
     (run / 'audit.json').write_text(json.dumps(audit, indent=2), encoding='utf-8')
     print('Audit:', json.dumps(audit, ensure_ascii=False))
     groups = defaultdict(list)
@@ -65,7 +65,7 @@ def detailed_analysis(run, rows, metrics, repeats, seed):
                         draws.append(roc_auc_score(labels[ix], vals[ix]))
                 lo, hi = np.quantile(draws, [.025, .975]) if draws else ('', '')
                 intervals.append(dict(generator=generator, view=view, metric=metric, n_real=len(real), n_fake=len(fake), auroc=auc, ci_low=lo, ci_high=hi, bootstrap=len(draws)))
-            for baseline in ('patch_change', 'cls_change'):
+            for baseline in ('patch_change', 'patch_change_b', 'cls_change', 'cls_cosine_change'):
                 if metric == baseline:
                     continue
                 paired = [r for r in usable if number(r, baseline) is not None]
@@ -74,7 +74,7 @@ def detailed_analysis(run, rows, metrics, repeats, seed):
                     x = np.array([number(r, metric) for r in selected]); y = np.array([number(r, baseline) for r in selected])
                     if len(x) > 1 and x.std() > 0 and y.std() > 0:
                         correlations.append(dict(generator=generator, view=view, metric=metric, baseline=baseline, subset=label, n=len(x), pearson=np.corrcoef(x, y)[0, 1]))
-                if metric == 'gram_bb' and view == 'local_noise':
+                if metric == 'gram_bb' and view in ('local_noise', 'rigid_local_noise'):
                     y = np.array([r['label'] == 'fake' for r in paired], dtype=bool); a = np.array([number(r, metric) for r in paired]); b = np.array([number(r, baseline) for r in paired])
                     real, fake = np.flatnonzero(~y), np.flatnonzero(y)
                     if len(real) and len(fake):

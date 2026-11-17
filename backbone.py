@@ -20,7 +20,10 @@ class Backbone:
 
     @torch.inference_mode()
     def __call__(self, images):
-        images = (images.to(self.device) - self.mean) / self.std
+        return self.forward_normalized((images.to(self.device) - self.mean) / self.std)
+
+    @torch.inference_mode()
+    def forward_normalized(self, images):
         config = self.model.config
         h, w = images.shape[-2:]
         patch = config.patch_size

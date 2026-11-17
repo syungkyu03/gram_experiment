@@ -62,7 +62,8 @@ def main():
     run = Path(args.run)
     with (run / 'scores.csv').open(encoding='utf-8', newline='') as f:
         rows = list(csv.DictReader(f))
-    metrics = ['static_bottom10', 'gram_l1', 'gram_signed', 'gram_near', 'gram_far', 'gram_aa', 'gram_ab', 'gram_bb', 'cka_change', 'patch_change', 'cls_change']
+    metrics = ['static_bottom10', 'gram_l1', 'gram_signed', 'gram_near', 'gram_far', 'gram_aa', 'gram_ab', 'gram_bb', 'cka_change', 'patch_change', 'patch_change_a', 'patch_change_b', 'cls_change', 'cls_cosine_change']
+    metrics = [metric for metric in metrics if rows and metric in rows[0]]
     groups = defaultdict(list)
     for row in rows:
         groups[(row['generator'], row['view'])].append(row)

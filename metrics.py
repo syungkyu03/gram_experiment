@@ -33,13 +33,18 @@ def scores(z, cls, zt, clst, mask=None):
     out = {'gram_l1': d.abs().mean(-1), 'gram_signed': d.mean(-1),
            'gram_near': d[:, near].abs().mean(-1), 'gram_far': d[:, far].abs().mean(-1),
            'patch_change': (z - zt).norm(dim=-1).mean(-1),
-           'cls_change': (cls - clst).norm(dim=-1)}
+           'cls_change': (cls - clst).norm(dim=-1),
+           'cls_cosine_change': 1 - F.cosine_similarity(cls, clst, dim=-1)}
     center = lambda x: x - x.mean(-1, keepdim=True) - x.mean(-2, keepdim=True) + x.mean((-1, -2), keepdim=True)
     a, b = center(g), center(gt)
     out['cka_change'] = 1 - (a * b).sum((-1, -2)) / (a.square().sum((-1, -2)).sqrt() * b.square().sum((-1, -2)).sqrt()).clamp_min(1e-12)
     if mask is not None:
         # Any perturbed pixel marks the corresponding patch as affected.
         affected = F.adaptive_max_pool2d(mask[:, None].float(), (side, side)).flatten(1).bool()
+        patch_diff = (z - zt).norm(dim=-1)
+        for name, valid in [('patch_change_a', affected), ('patch_change_b', ~affected)]:
+            count = valid.sum(-1)
+            out[name] = ((patch_diff * valid).sum(-1) / count.clamp_min(1)).masked_fill(count == 0, float('nan'))
         first, second = affected[:, idx[0]], affected[:, idx[1]]
         for name, valid in [('gram_aa', first & second), ('gram_ab', first ^ second), ('gram_bb', ~first & ~second)]:
             count = valid.sum(-1)

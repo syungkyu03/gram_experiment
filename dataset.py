@@ -45,14 +45,15 @@ def select_images(root, samples, seed, generators='all', excluded=None):
 
 
 class Images(Dataset):
-    def __init__(self, rows, size):
-        self.rows, self.size = rows, size
+    def __init__(self, rows, size, rigid=False):
+        self.rows, self.size, self.rigid = rows, size, rigid
 
     def __len__(self):
         return len(self.rows)
 
     def __getitem__(self, index):
         with Image.open(self.rows[index]['path']) as image:
-            image = ImageOps.exif_transpose(image).convert('RGB').resize((self.size, self.size), Image.Resampling.BICUBIC)
-            array = np.array(image, dtype=np.float32) / 255.0
-        return index, torch.from_numpy(array).permute(2, 0, 1)
+            image = ImageOps.exif_transpose(image).convert('RGB')
+            array = np.array(image.resize((self.size, self.size), Image.Resampling.BICUBIC), dtype=np.float32) / 255.0
+            rigid = np.array(image.resize((224, 224), Image.Resampling.BILINEAR), dtype=np.float32) / 255.0 if self.rigid else array
+        return index, torch.from_numpy(array).permute(2, 0, 1), torch.from_numpy(rigid).permute(2, 0, 1)

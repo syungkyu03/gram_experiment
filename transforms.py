@@ -7,6 +7,24 @@ def sample_seed(seed, path, view):
     return int.from_bytes(digest[:8], 'little') % (2**63 - 1)
 
 
+def rigid_transform(images, rows, view, seed, noise_std, local_fraction):
+    result, masks = [], []
+    for image, row in zip(images, rows):
+        generator = torch.Generator(device=image.device).manual_seed(sample_seed(seed, row['path'], view))
+        mask = torch.ones(image.shape[-2:], device=image.device, dtype=torch.bool)
+        if view == 'rigid_local_noise':
+            h, w = mask.shape
+            height, width = max(1, round(h * local_fraction ** .5)), max(1, round(w * local_fraction ** .5))
+            top = int(torch.randint(h - height + 1, (1,), generator=generator, device=image.device))
+            left = int(torch.randint(w - width + 1, (1,), generator=generator, device=image.device))
+            mask.zero_()
+            mask[top:top + height, left:left + width] = True
+        noise = torch.randn(image.shape, device=image.device, generator=generator)
+        result.append(image + noise_std * noise * mask)
+        masks.append(mask)
+    return torch.stack(result), torch.stack(masks)
+
+
 def transform(images, rows, view, seed, noise_std, local_fraction, wavelet_strength, vae=None):
     result, masks = [], []
     for image, row in zip(images, rows):
