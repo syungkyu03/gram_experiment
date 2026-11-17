@@ -40,7 +40,8 @@ def scores(z, cls, zt, clst, mask=None):
     if mask is not None:
         # Any perturbed pixel marks the corresponding patch as affected.
         affected = F.adaptive_max_pool2d(mask[:, None].float(), (side, side)).flatten(1).bool()
-        valid = (~affected[:, idx[0]]) & (~affected[:, idx[1]])
-        out['gram_bb'] = (d.abs() * valid).sum(-1) / valid.sum(-1).clamp_min(1)
-        out['gram_bb'] = out['gram_bb'].masked_fill(valid.sum(-1) == 0, float('nan'))
+        first, second = affected[:, idx[0]], affected[:, idx[1]]
+        for name, valid in [('gram_aa', first & second), ('gram_ab', first ^ second), ('gram_bb', ~first & ~second)]:
+            count = valid.sum(-1)
+            out[name] = ((d.abs() * valid).sum(-1) / count.clamp_min(1)).masked_fill(count == 0, float('nan'))
     return out

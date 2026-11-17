@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 from sklearn.metrics import roc_auc_score
+from analysis_details import detailed_analysis
 
 
 def report(summary, run):
@@ -55,11 +56,13 @@ def report(summary, run):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--run', required=True)
+    parser.add_argument('--bootstrap', type=int, default=200, help='Stratified bootstrap repetitions; 0 disables')
+    parser.add_argument('--seed', type=int, default=42)
     args = parser.parse_args()
     run = Path(args.run)
     with (run / 'scores.csv').open(encoding='utf-8', newline='') as f:
         rows = list(csv.DictReader(f))
-    metrics = ['static_bottom10', 'gram_l1', 'gram_signed', 'gram_near', 'gram_far', 'gram_bb', 'cka_change', 'patch_change', 'cls_change']
+    metrics = ['static_bottom10', 'gram_l1', 'gram_signed', 'gram_near', 'gram_far', 'gram_aa', 'gram_ab', 'gram_bb', 'cka_change', 'patch_change', 'cls_change']
     groups = defaultdict(list)
     for row in rows:
         groups[(row['generator'], row['view'])].append(row)
@@ -91,6 +94,7 @@ def main():
         writer.writerows(correlations)
     print(f'Wrote {len(summary)} AUROC rows and {len(correlations)} correlations')
     report(summary, run)
+    detailed_analysis(run, rows, metrics, args.bootstrap, args.seed)
 
 
 if __name__ == '__main__':

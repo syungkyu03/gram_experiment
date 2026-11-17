@@ -10,7 +10,7 @@ import torch
 EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.bmp'}
 
 
-def select_images(root, samples, seed, generators='all'):
+def select_images(root, samples, seed, generators='all', excluded=None):
     root = Path(root)
     groups = defaultdict(list)
     for path in sorted(root.rglob('*')):
@@ -20,6 +20,8 @@ def select_images(root, samples, seed, generators='all'):
         for i, part in enumerate(parts[:-1]):
             label = {'nature': 'real', 'ai': 'fake'}.get(part.lower())
             if label and i > 0 and 'val' in [p.lower() for p in parts[1:i]]:
+                if excluded and str(path.resolve()) in excluded:
+                    break
                 generator = parts[0]
                 if generators == 'all' or generator in generators.split(','):
                     class_name = parts[i + 1] if i + 2 < len(parts) else ''
@@ -32,9 +34,12 @@ def select_images(root, samples, seed, generators='all'):
     for generator in sorted({g for g, _ in groups}):
         for label in ('real', 'fake'):
             images = groups[(generator, label)]
-            if len(images) < samples:
+            if not images:
+                raise ValueError(f'{generator}/{label}: no images found')
+            if samples is not None and len(images) < samples:
                 raise ValueError(f'{generator}/{label}: found {len(images)}, need {samples}')
-            for path, cls in rng.sample(images, samples):
+            selected = rng.sample(images, samples) if samples is not None else images
+            for path, cls in selected:
                 rows.append({'path': str(path.resolve()), 'generator': generator, 'label': label, 'class_name': cls})
     return rows
 

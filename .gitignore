@@ -8,3 +8,4 @@ results/
 *.safetensors
 README.md
 .env
+gram_results/
