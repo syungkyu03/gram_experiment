@@ -23,6 +23,18 @@ class Backbone:
         return self.forward_normalized((images.to(self.device) - self.mean) / self.std)
 
     @torch.inference_mode()
+    def with_attention(self, images):
+        images = (images.to(self.device) - self.mean) / self.std
+        output = self.model(pixel_values=images, output_attentions=True, return_dict=True)
+        tokens = output.last_hidden_state
+        prefix = 1 + self.model.config.num_register_tokens
+        side = images.shape[-1] // self.model.config.patch_size
+        if tokens.shape[1] != prefix + side * side or not output.attentions or output.attentions[-1] is None:
+            raise RuntimeError('Expected patch tokens and final-layer attention')
+        attention = output.attentions[-1][:, :, 0, prefix:].float().mean(1)
+        return tokens[:, prefix:].float(), tokens[:, 0].float(), attention
+
+    @torch.inference_mode()
     def forward_normalized(self, images):
         config = self.model.config
         h, w = images.shape[-2:]

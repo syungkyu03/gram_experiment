@@ -8,6 +8,31 @@ def gram(z):
     return z @ z.transpose(-1, -2)
 
 
+def ring_scores(z, zt, top, left, side_a=8, margin=4):
+    side = math.isqrt(z.shape[0])
+    if side * side != z.shape[0]:
+        raise ValueError('Expected square patch grid')
+    y, x = torch.meshgrid(torch.arange(side, device=z.device), torch.arange(side, device=z.device), indexing='ij')
+    dy = torch.maximum(torch.maximum(top - y, y - (top + side_a - 1)), torch.zeros_like(y))
+    dx = torch.maximum(torch.maximum(left - x, x - (left + side_a - 1)), torch.zeros_like(x))
+    dist = torch.maximum(dy, dx).flatten()
+    reference = dist > margin
+    diff = gram(zt) - gram(z)
+    patch = (zt - z).norm(dim=-1)
+    result = []
+    for distance in range(1, int(dist.max()) + 1):
+        ring = dist == distance
+        eligible = ring[:, None] & reference[None, :]
+        eligible.fill_diagonal_(False)
+        if not eligible.any():
+            raise ValueError('No valid reference edges for ring')
+        result.append((distance, int(ring.sum()), float(patch[ring].mean()), float(diff.abs()[eligible].mean())))
+    b = dist > 0
+    pairs = b[:, None] & b[None, :]
+    pairs.fill_diagonal_(False)
+    return result, float(diff.abs()[pairs].mean())
+
+
 def static_score(g):
     n = g.shape[-1]
     if n < 2:

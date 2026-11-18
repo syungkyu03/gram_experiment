@@ -7,6 +7,13 @@ def sample_seed(seed, path, view):
     return int.from_bytes(digest[:8], 'little') % (2**63 - 1)
 
 
+def region_noise(image, top, left, noise):
+    result = image.clone()
+    height, width = noise.shape[-2:]
+    result[:, top:top + height, left:left + width] = (result[:, top:top + height, left:left + width] + noise).clamp(0, 1)
+    return result
+
+
 def rigid_transform(images, rows, view, seed, noise_std, local_fraction):
     result, masks = [], []
     for image, row in zip(images, rows):
