@@ -23,6 +23,8 @@ def main():
     parser.add_argument('--samples', default='50')
     parser.add_argument('--generators', default='all')
     parser.add_argument('--device', default='cuda:0')
+    parser.add_argument('--batch-size', type=int, default=1, help='Images per perturbed forward')
+    parser.add_argument('--attention-batch-size', type=int, default=4, help='Maximum images per original attention forward')
     parser.add_argument('--num-workers', type=int, default=2)
     parser.add_argument('--threads', type=int, default=2)
     parser.add_argument('--seed', type=int, default=42)
@@ -33,6 +35,8 @@ def main():
     samples = None if args.samples == 'all' else int(args.samples)
     if samples is not None and samples < 1 or args.noise_std < 0:
         parser.error('invalid samples or noise standard deviation')
+    if args.batch_size < 1 or args.attention_batch_size < 1:
+        parser.error('batch sizes must be positive')
     torch.set_num_threads(args.threads)
     rows = select_images(args.data_root, samples, args.seed, args.generators)
     output = Path('results') / args.name
@@ -44,35 +48,53 @@ def main():
     model = Backbone(args.device)
     if model.model.config.patch_size != 16:
         raise ValueError('This experiment expects patch size 16')
-    loader = DataLoader(Images(rows, 512), batch_size=1, num_workers=args.num_workers)
+    loader = DataLoader(Images(rows, 512), batch_size=args.batch_size, num_workers=args.num_workers)
     fields = ['path', 'generator', 'label', 'class_name', 'selection', 'top_patch', 'left_patch', 'attention_mean', 'cls_cosine_change', 'bb_change', 'rings']
     start = time.monotonic()
     with (output / 'scores.csv').open('w', newline='', encoding='utf-8') as f, torch.inference_mode():
         writer = csv.DictWriter(f, fieldnames=fields); writer.writeheader()
         for indices, images, _ in loader:
-            index = indices.item(); row = rows[index]; image = images.to(args.device)
-            z, cls, attention = model.with_attention(image)
-            if attention.shape != (1, 1024):
+            batch_rows = [rows[index] for index in indices.tolist()]
+            images = images.to(args.device)
+            # Requesting attention retains the maps for all layers during this forward.
+            originals = [model.with_attention(chunk) for chunk in images.split(args.attention_batch_size)]
+            z, cls, attention = (torch.cat(parts) for parts in zip(*originals))
+            del originals
+            if attention.shape != (len(images), 1024):
                 raise ValueError(f'Unexpected attention shape {tuple(attention.shape)}')
-            map_ = attention.reshape(1, 1, 32, 32)
-            candidates = F.avg_pool2d(map_, 8, stride=1)[0, 0, 4:21, 4:21]
-            best = int(candidates.argmax())
-            generator = torch.Generator(device=image.device).manual_seed(sample_seed(args.seed, row['path'], 'ring_position'))
-            random_index = int(torch.randint(candidates.numel(), (1,), generator=generator, device=image.device))
-            noise_gen = torch.Generator(device=image.device).manual_seed(sample_seed(args.seed, row['path'], 'ring_noise'))
-            noise = torch.randn((3, 128, 128), generator=noise_gen, device=image.device) * args.noise_std
-            for selection, chosen in [('high_attention', best), ('random', random_index)]:
-                top, left = 4 + chosen // 17, 4 + chosen % 17
-                altered = region_noise(image[0], top * 16, left * 16, noise)
-                zt, clst = model(altered[None])
-                rings, bb = ring_scores(z[0], zt[0], top, left)
-                writer.writerow({**row, 'selection': selection, 'top_patch': top, 'left_patch': left,
-                                 'attention_mean': float(candidates[top - 4, left - 4]),
-                                 'cls_cosine_change': float(1 - F.cosine_similarity(cls, clst).item()),
-                                 'bb_change': bb, 'rings': json.dumps(rings)})
+            maps = attention.reshape(-1, 1, 32, 32)
+            candidates = F.avg_pool2d(maps, 8, stride=1)[:, 0, 4:21, 4:21].flatten(1).cpu()
+            best = candidates.argmax(dim=1).tolist()
+            random_indices, noises = [], []
+            for row in batch_rows:
+                generator = torch.Generator(device=images.device).manual_seed(sample_seed(args.seed, row['path'], 'ring_position'))
+                random_indices.append(torch.randint(candidates.shape[1], (1,), generator=generator, device=images.device))
+                noise_gen = torch.Generator(device=images.device).manual_seed(sample_seed(args.seed, row['path'], 'ring_noise'))
+                noises.append(torch.randn((3, 128, 128), generator=noise_gen, device=images.device) * args.noise_std)
+            batch_results = [[] for _ in batch_rows]
+            for selection, choices in [('high_attention', best), ('random', torch.cat(random_indices).tolist())]:
+                positions = [(4 + choice // 17, 4 + choice % 17) for choice in choices]
+                altered = torch.stack([
+                    region_noise(image, top * 16, left * 16, noise)
+                    for image, (top, left), noise in zip(images, positions, noises)
+                ])
+                zt, clst = model(altered)
+                cls_changes = (1 - F.cosine_similarity(cls, clst)).tolist()
+                for i, (top, left) in enumerate(positions):
+                    rings, bb = ring_scores(z[i], zt[i], top, left)
+                    batch_results[i].append({**batch_rows[i], 'selection': selection, 'top_patch': top, 'left_patch': left,
+                                             'attention_mean': candidates[i, choices[i]].item(),
+                                             'cls_cosine_change': cls_changes[i], 'bb_change': bb, 'rings': json.dumps(rings)})
+                del altered, zt, clst
+            for results in batch_results:
+                writer.writerows(results)
             f.flush()
-            done = index + 1; elapsed = time.monotonic() - start
+            done = indices[-1].item() + 1
+            elapsed = time.monotonic() - start
             print(f'{done}/{len(rows)} images | elapsed {elapsed/60:.1f} min | ETA {elapsed/done*(len(rows)-done)/60:.1f} min', flush=True)
+            if images.is_cuda and (done == len(indices) or done == len(rows)):
+                peak = torch.cuda.max_memory_reserved(images.device) / 1024**3
+                print(f'Peak PyTorch CUDA reserved memory: {peak:.2f} GiB', flush=True)
 
 
 if __name__ == '__main__':
