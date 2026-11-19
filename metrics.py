@@ -8,6 +8,22 @@ def gram(z):
     return z @ z.transpose(-1, -2)
 
 
+def upper_gram(tokens):
+    n = tokens.shape[-2]
+    i, j = torch.triu_indices(n, n, offset=1, device=tokens.device)
+    return gram(tokens)[..., i, j]
+
+
+def gram_distances(original, perturbed):
+    """Compare vectors containing the same strictly upper-triangular Gram entries."""
+    a = original / original.norm(dim=-1, keepdim=True)
+    b = perturbed / perturbed.norm(dim=-1, keepdim=True)
+    # This equals 1 - cosine and avoids cancellation for nearly equal matrices.
+    cosine_distance = 0.5 * (a - b).square().sum(dim=-1)
+    l1 = (original - perturbed).abs().mean(dim=-1)
+    return cosine_distance, l1
+
+
 def lr_scores(original, left_perturbed, right_perturbed):
     """Score the two readouts per source, using tensors shaped [batch, readout, patch, dim]."""
     ll, lr = (left_perturbed - original).norm(dim=-1).mean(dim=-1).unbind(dim=1)

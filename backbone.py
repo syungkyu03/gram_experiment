@@ -47,3 +47,24 @@ class Backbone:
         if tuple(tokens.shape) != expected:
             raise ValueError(f'Token shape {tuple(tokens.shape)} does not match {expected}')
         return tokens[:, prefix:].float(), tokens[:, 0].float()
+
+    @torch.inference_mode()
+    def forward_with_block_cls(self, normalized_images):
+        # Read each block before the separate final LayerNorm. Clone the CLS slice
+        # so that the hooks do not keep the whole patch sequence for each layer.
+        encoder = getattr(self.model, 'model', self.model)
+        blocks = encoder.layer
+        cls_states = []
+
+        def capture_cls(_module, _inputs, output):
+            cls_states.append(output[:, 0, :].clone())
+
+        handles = [block.register_forward_hook(capture_cls) for block in blocks]
+        try:
+            patches, final_cls = self.forward_normalized(normalized_images)
+        finally:
+            for handle in handles:
+                handle.remove()
+        if len(cls_states) != self.model.config.num_hidden_layers:
+            raise RuntimeError('Expected one CLS state for each transformer block')
+        return patches, final_cls, torch.stack(cls_states, dim=1).float()

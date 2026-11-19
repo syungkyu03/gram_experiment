@@ -28,3 +28,19 @@ python experiment_lr.py --name lr_smoke --samples 2 --batch-size 1 --device cuda
 ```
 
 Use `--samples all` and a new run name for the full run. `analysis_lr.py` writes per-generator AUROC, `lr_comparison.csv` with differences from the far-only score, and `figures/auroc_lr.png`.
+
+## Whole-matrix Gram experiment
+
+`experiment_gram.py` runs one resolution at a time. Both 224 and 512 use bilinear resize and ImageNet normalization. The second forward adds global Gaussian noise in normalized space with the existing `rigid_noise` seed policy and default sigma 0.05.
+
+The primary scores are final CLS cosine distance, final Patch Gram cosine distance, and Block CLS Gram cosine distance. Both Gram scores compare the strict upper triangles with every pair included. Gram L1 and direct CLS cosine distance for each block are saved as diagnostic scores. The final CLS comes after the model's final LayerNorm, while every CLS in the Block Gram comes from the block output before that final LayerNorm.
+
+`scores.csv` stores one row per image. `block_cls_grams.npy` stores the float32 upper triangles in manifest order with shape `[images, 2, block_pairs]`. The second axis is original then noisy, and the pair order follows `triu_indices` with offset 1. This takes about 53 MB for 100,000 images with the 12-block model. Patch Gram matrices are reduced to scores in memory.
+
+```bash
+python experiment_gram.py --name gram_224 --size 224 --samples all --batch-size 64 && \
+python experiment_gram.py --name gram_512 --size 512 --samples all --batch-size 64 && \
+python analysis_gram.py --run results/gram_224 results/gram_512
+```
+
+For a smoke test use distinct run names, `--samples 2`, and `--batch-size 1`. Analysis accepts one run or a matched 224 and 512 pair. It audits each run and saves per-generator AUROC, an AUROC heatmap, and Real/Fake Block CLS Gram heatmaps. The paired invocation checks the manifests and settings before printing a macro AUROC comparison.
