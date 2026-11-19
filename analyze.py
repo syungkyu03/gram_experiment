@@ -53,6 +53,17 @@ def report(summary, run):
         plt.close(fig)
 
 
+def summarize_aurocs(groups, metrics):
+    summary = []
+    for (generator, view), items in sorted(groups.items()):
+        for metric in metrics:
+            pairs = [(int(r['label'] == 'fake'), float(r[metric])) for r in items if r.get(metric) and math.isfinite(float(r[metric]))]
+            if len({y for y, _ in pairs}) != 2:
+                continue
+            summary.append({'generator': generator, 'view': view, 'metric': metric, 'n_real': sum(y == 0 for y, _ in pairs), 'n_fake': sum(y == 1 for y, _ in pairs), 'auroc_fake_high': roc_auc_score([y for y, _ in pairs], [v for _, v in pairs])})
+    return summary
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--run', required=True)
@@ -67,13 +78,7 @@ def main():
     groups = defaultdict(list)
     for row in rows:
         groups[(row['generator'], row['view'])].append(row)
-    summary = []
-    for (generator, view), items in sorted(groups.items()):
-        for metric in metrics:
-            pairs = [(int(r['label'] == 'fake'), float(r[metric])) for r in items if r.get(metric) and math.isfinite(float(r[metric]))]
-            if len({y for y, _ in pairs}) != 2:
-                continue
-            summary.append({'generator': generator, 'view': view, 'metric': metric, 'n_real': sum(y == 0 for y, _ in pairs), 'n_fake': sum(y == 1 for y, _ in pairs), 'auroc_fake_high': roc_auc_score([y for y, _ in pairs], [v for _, v in pairs])})
+    summary = summarize_aurocs(groups, metrics)
     with (run / 'summary.csv').open('w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=['generator', 'view', 'metric', 'n_real', 'n_fake', 'auroc_fake_high'])
         writer.writeheader()

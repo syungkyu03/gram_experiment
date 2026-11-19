@@ -10,7 +10,8 @@ def sample_seed(seed, path, view):
 def region_noise(image, top, left, noise):
     result = image.clone()
     height, width = noise.shape[-2:]
-    result[:, top:top + height, left:left + width] = (result[:, top:top + height, left:left + width] + noise).clamp(0, 1)
+    region = (..., slice(top, top + height), slice(left, left + width))
+    result[region] = (result[region] + noise).clamp(0, 1)
     return result
 
 

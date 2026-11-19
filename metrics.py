@@ -8,6 +8,17 @@ def gram(z):
     return z @ z.transpose(-1, -2)
 
 
+def lr_scores(original, left_perturbed, right_perturbed):
+    """Score the two readouts per source, using tensors shaped [batch, readout, patch, dim]."""
+    ll, lr = (left_perturbed - original).norm(dim=-1).mean(dim=-1).unbind(dim=1)
+    rl, rr = (right_perturbed - original).norm(dim=-1).mean(dim=-1).unbind(dim=1)
+    near = (ll * rr).sqrt()
+    far = (lr * rl).sqrt()
+    ratio = (far / near).masked_fill(near == 0, float('nan'))
+    return dict(response_ll=ll, response_lr=lr, response_rl=rl, response_rr=rr,
+                near_patch=near, far_patch=far, lr_cross_ratio=ratio)
+
+
 def ring_scores(z, zt, top, left, side_a=8, margin=4):
     side = math.isqrt(z.shape[0])
     if side * side != z.shape[0]:

@@ -16,3 +16,15 @@ python analyze.py --run results/comparison_smoke --bootstrap 0
 ```
 
 To resume, use the same experiment arguments plus `--resume`. Existing runs with older score schemas cannot be resumed with this version. Use a new experiment name. Selecting `--transforms` overrides defaults completely. Bootstrap analysis can take a long time; `--bootstrap 0` skips it.
+
+## Left–right perturbation experiment
+
+`experiment_lr.py` uses the Ring input setup (512×512 bicubic resize and DINOv3 ViT-B/16). It runs the original image and two versions with the same 128×128 Gaussian noise tensor applied separately to symmetric locations. Both readout regions stay unmodified and contain 32 patches. In patch coordinates the left mask and readout occupy columns 4–11 and 0–3, and the right mask and readout occupy columns 20–27 and 28–31. All four regions occupy rows 12–19. Readout distances from a mask are 1–4 patches on the same side and 17–20 across the image.
+
+`scores.csv` stores one row per image with four mean Patch L2 responses. The first letter of each response identifies the perturbation side and the second identifies the readout side. `near_patch` is the geometric mean of LL and RR, and `far_patch` is the geometric mean of LR and RL. `lr_cross_ratio` divides `far_patch` by `near_patch`. The analysis compares all three scores on the same finite rows and records omissions in `audit.json`.
+
+```bash
+python experiment_lr.py --name lr_smoke --samples 2 --batch-size 1 --device cuda:0 && python analysis_lr.py --run results/lr_smoke
+```
+
+Use `--samples all` and a new run name for the full run. `analysis_lr.py` writes per-generator AUROC, `lr_comparison.csv` with differences from the far-only score, and `figures/auroc_lr.png`.

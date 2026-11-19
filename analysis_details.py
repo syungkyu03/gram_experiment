@@ -22,13 +22,7 @@ def number(row, key):
         return None
 
 
-def detailed_analysis(run, rows, metrics, repeats, seed):
-    if repeats < 0:
-        raise ValueError('--bootstrap must be nonnegative')
-    run = Path(run)
-    rng = np.random.default_rng(seed)
-    config = json.loads((run / 'config.json').read_text(encoding='utf-8'))
-    views = config['transforms'].split(',')
+def audit_scores(run, rows, metrics, views):
     with (run / 'manifest.csv').open(newline='', encoding='utf-8') as f:
         manifest = list(csv.DictReader(f))
     key = lambda r: (r['path'], r['generator'], r['label'])
@@ -41,6 +35,17 @@ def detailed_analysis(run, rows, metrics, repeats, seed):
              'nonfinite_or_missing': {metric: sum(number(r, metric) is None for r in rows if metric not in ('gram_aa', 'gram_ab', 'gram_bb', 'patch_change_a', 'patch_change_b') or r['view'] in ('local_noise', 'rigid_local_noise')) for metric in metrics}}
     (run / 'audit.json').write_text(json.dumps(audit, indent=2), encoding='utf-8')
     print('Audit:', json.dumps(audit, ensure_ascii=False))
+    return audit
+
+
+def detailed_analysis(run, rows, metrics, repeats, seed):
+    if repeats < 0:
+        raise ValueError('--bootstrap must be nonnegative')
+    run = Path(run)
+    rng = np.random.default_rng(seed)
+    config = json.loads((run / 'config.json').read_text(encoding='utf-8'))
+    views = config['transforms'].split(',')
+    audit_scores(run, rows, metrics, views)
     groups = defaultdict(list)
     for row in rows:
         groups[(row['generator'], row['view'])].append(row)
