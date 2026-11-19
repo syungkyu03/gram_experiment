@@ -9,7 +9,7 @@ from sklearn.metrics import roc_auc_score
 from analysis_details import detailed_analysis
 
 
-def report(summary, run):
+def report(summary, run, *, plot=True):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -39,6 +39,8 @@ def report(summary, run):
             writer.writerow(['metric', *generators, 'macro_mean'])
             for method, values, mean in zip(methods, matrix, means):
                 writer.writerow([method, *[f'{x:.6f}' if np.isfinite(x) else '' for x in values], f'{mean:.6f}' if np.isfinite(mean) else ''])
+        if not plot:
+            continue
         fig, ax = plt.subplots(figsize=(max(7, len(generators) * 1.3), max(3, len(methods) * .5 + 1.5)))
         image = ax.imshow(np.ma.masked_invalid(matrix), cmap='RdBu_r', vmin=0, vmax=1, aspect='auto')
         ax.set_xticks(range(len(generators)), generators, rotation=35, ha='right')

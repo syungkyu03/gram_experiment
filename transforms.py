@@ -33,6 +33,13 @@ def rigid_transform(images, rows, view, seed, noise_std, local_fraction):
     return torch.stack(result), torch.stack(masks)
 
 
+def haar_attenuate(images, strength):
+    if any(size % 2 for size in images.shape[-2:]):
+        raise ValueError('Wavelet requires even image dimensions')
+    low = torch.nn.functional.avg_pool2d(images, 2, 2).repeat_interleave(2, -2).repeat_interleave(2, -1)
+    return low + (images - low) * (1 - strength)
+
+
 def transform(images, rows, view, seed, noise_std, local_fraction, wavelet_strength, vae=None):
     result, masks = [], []
     for image, row in zip(images, rows):
@@ -49,10 +56,7 @@ def transform(images, rows, view, seed, noise_std, local_fraction, wavelet_stren
             mask[top:top + side_h, left:left + side_w] = True
             x = x + torch.randn(x.shape, generator=generator, device=x.device) * noise_std * mask
         elif view == 'wavelet':
-            if x.shape[-1] % 2 or x.shape[-2] % 2:
-                raise ValueError('Wavelet requires even image dimensions')
-            low = torch.nn.functional.avg_pool2d(x[None], 2, 2).repeat_interleave(2, -2).repeat_interleave(2, -1)[0]
-            x = low + (x - low) * (1 - wavelet_strength)
+            x = haar_attenuate(x[None], wavelet_strength)[0]
         elif view == 'vae':
             with torch.inference_mode():
                 latent = vae.encode(x[None] * 2 - 1).latent_dist.mode()

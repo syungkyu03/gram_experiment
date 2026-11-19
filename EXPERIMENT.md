@@ -31,16 +31,29 @@ Use `--samples all` and a new run name for the full run. `analysis_lr.py` writes
 
 ## Whole-matrix Gram experiment
 
-`experiment_gram.py` runs one resolution at a time. Both 224 and 512 use bilinear resize and ImageNet normalization. The second forward adds global Gaussian noise in normalized space with the existing `rigid_noise` seed policy and default sigma 0.05.
+`experiment_gram.py` runs one resolution at a time. Both 224 and 512 use bilinear resize, EXIF orientation and ImageNet normalization. Within each batch, one original forward is shared across four global perturbations.
 
-The primary scores are final CLS cosine distance, final Patch Gram cosine distance, and Block CLS Gram cosine distance. Both Gram scores compare the strict upper triangles with every pair included. Gram L1 and direct CLS cosine distance for each block are saved as diagnostic scores. The final CLS comes after the model's final LayerNorm, while every CLS in the Block Gram comes from the block output before that final LayerNorm.
+* `rigid_noise` adds Gaussian noise in normalized space with the original per-image seed policy and default sigma 0.05.
+* `gaussian_blur` uses sigma 1 pixel at 224 and scales it by 512/224 at 512. The kernel radius is rounded up from three times sigma.
+* `down_up` uses antialiased bilinear resizing to 75% of the input size and back.
+* `wavelet` attenuates the existing one-level Haar detail by 50%.
 
-`scores.csv` stores one row per image. `block_cls_grams.npy` stores the float32 upper triangles in manifest order with shape `[images, 2, block_pairs]`. The second axis is original then noisy, and the pair order follows `triu_indices` with offset 1. This takes about 53 MB for 100,000 images with the 12-block model. Patch Gram matrices are reduced to scores in memory.
+Blur, resampling and Wavelet operate on RGB pixels before normalization. For each image and view, `scores.csv` records final CLS cosine distance, the 12 block CLS cosine distances, Patch Gram cosine and L1, and Block CLS Gram cosine, L1 and norm drop. Gram comparisons use the strictly upper-triangular pairs. Norm drop is `1 - ||G_perturbed|| / ||G_original||` on the 66 Block CLS pairs. The final CLS comes after the model's final LayerNorm. Block CLS tokens come from each block before that separate final LayerNorm. The matrices stay in memory for scoring within the batch.
 
 ```bash
-python experiment_gram.py --name gram_224 --size 224 --samples all --batch-size 64 && \
-python experiment_gram.py --name gram_512 --size 512 --samples all --batch-size 64 && \
-python analysis_gram.py --run results/gram_224 results/gram_512
+python experiment_gram.py --name gram_global_224 --size 224 --samples all --batch-size 64 && \
+python experiment_gram.py --name gram_global_512 --size 512 --manifest results/gram_global_224/manifest.csv --batch-size 64 && \
+python analysis_gram.py --run results/gram_global_224 results/gram_global_512
 ```
 
-For a smoke test use distinct run names, `--samples 2`, and `--batch-size 1`. Analysis accepts one run or a matched 224 and 512 pair. It audits each run and saves per-generator AUROC, an AUROC heatmap, and Real/Fake Block CLS Gram heatmaps. The paired invocation checks the manifests and settings before printing a macro AUROC comparison.
+For a smoke test use distinct run names, `--samples 2` on the first run, and `--batch-size 1`. Analysis accepts one run or a matched 224 and 512 pair. It saves per-generator and macro AUROC, every score's difference from the final CLS on that view in `delta_vs_final_cls.csv`, and `figures/macro_auroc.png`. A matched pair writes `resolution_comparison.csv` to the larger run. Previous single-Gaussian runs still use their saved Block CLS Gram archive for the original figures.
+
+To evaluate the official RIGID protocol on the same image list, use the original DINOv2 ViT-L/14 backbone via Torch Hub, 224 bilinear resize, ImageFolder-style RGB decoding, and seed 100 by default. First use requires access to GitHub and the DINOv2 weights. The exact sampled noise can vary with batch size or device.
+
+```bash
+python experiment_gram.py --name rigid_official --size 224 --official-rigid \
+  --manifest results/gram_global_224/manifest.csv --batch-size 64 && \
+python analysis_gram.py --run results/gram_global_224 results/gram_global_512 --rigid-run results/rigid_official
+```
+
+The combined analysis writes `official_rigid_comparison.csv` alongside the resolution comparison.
