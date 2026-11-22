@@ -60,7 +60,13 @@ VIEW_LABELS = {'rigid_noise': 'Gaussian noise', 'gaussian_blur': 'Gaussian blur'
                'down_up': 'Down / upsample', 'wavelet': 'Haar wavelet', 'official_rigid': 'Official RIGID'}
 METHOD_LABELS = {FINAL_CLS: 'Final CLS', 'patch_gram_cos': 'Patch Gram cosine',
                  'block_cls_gram_cos': 'CLS Gram cosine', 'patch_gram_l1': 'Patch Gram L1',
-                 'block_cls_gram_l1': 'CLS Gram L1', 'block_cls_gram_norm_drop': 'CLS Gram norm drop'}
+                 'block_cls_gram_l1': 'CLS Gram L1', 'block_cls_gram_norm_drop': 'CLS Gram norm drop',
+                 'block_cls_gram_even_norm_drop': 'CLS Gram norm drop (12 even blocks)'}
+GRAM_PROTOCOL = ('resize', 'noise_space', 'noise_std', 'noise_seed_view', 'seed', 'block_cls_source',
+                 'patch_size', 'views', 'exif_transpose', 'blur_sigma_at_224', 'blur_kernel_radius_sigmas',
+                 'downsample_scale', 'down_up_interpolation', 'wavelet_strength')
+VIT_B_ID = 'facebook/dinov3-vitb16-pretrain-lvd1689m'
+VIT_L_ID = 'facebook/dinov3-vitl16-pretrain-lvd1689m'
 
 
 def read_manifest(run):
@@ -68,7 +74,7 @@ def read_manifest(run):
         return list(csv.DictReader(f))
 
 
-def read_scores(run, manifest, views, metrics, legacy):
+def read_scores(run, manifest, views, metrics, legacy, *, save_audit=True):
     positions = {tuple(row[field] for field in MANIFEST_FIELDS): i for i, row in enumerate(manifest)}
     view_indices = {view: i for i, view in enumerate(views)}
     values = np.full((len(views), len(manifest), len(metrics)), np.nan)
@@ -105,11 +111,12 @@ def read_scores(run, manifest, views, metrics, legacy):
                  manifest_order_mismatches=order_mismatches,
                  nonfinite_or_missing={metric: int(np.count_nonzero(seen & ~np.isfinite(values[:, :, i])))
                                        for i, metric in enumerate(metrics)})
-    (run / 'audit.json').write_text(json.dumps(audit, indent=2), encoding='utf-8')
+    if save_audit:
+        (run / 'audit.json').write_text(json.dumps(audit, indent=2), encoding='utf-8')
     print('Audit:', json.dumps(audit), flush=True)
     if any(audit[key] for key in ('missing_rows', 'unexpected_rows', 'duplicate_rows',
                                   'duplicate_manifest_rows', 'manifest_order_mismatches')) or any(audit['nonfinite_or_missing'].values()):
-        raise ValueError(f'{run} is incomplete or contains invalid scores. See audit.json.')
+        raise ValueError(f'{run} is incomplete or contains invalid scores. See the audit above.')
     return values
 
 
@@ -137,12 +144,12 @@ def plot_macro(run, size, views, metrics, aurocs):
     plt.close(fig)
 
 
-def analyze_run(run, config, manifest):
+def analyze_run(run, config, manifest, *, save_reports=True):
     metrics = config['metrics']
     legacy = config['score_schema'] == 1
     views = ['gram'] if legacy else config['views']
     print(f'\n{run} ({config["size"]} px)', flush=True)
-    values = read_scores(run, manifest, views, metrics, legacy)
+    values = read_scores(run, manifest, views, metrics, legacy, save_audit=save_reports)
     if legacy:
         num_blocks = config['num_blocks']
         archive = np.load(run / 'block_cls_grams.npy', mmap_mode='r', allow_pickle=False)
@@ -174,6 +181,8 @@ def analyze_run(run, config, manifest):
     for view in views:
         for metric in metrics:
             aurocs[view, metric, MACRO] = mean(aurocs[view, metric, name] for name in names)
+    if not save_reports:
+        return aurocs
     write_csv(run / 'summary.csv', ['generator', 'view', 'metric', 'n_real', 'n_fake', 'auroc_fake_high'], summary)
     report(summary, run, plot=legacy)
     if legacy:
@@ -203,10 +212,36 @@ def load_run(run):
     return run, config
 
 
+def compare_backbones(runs, results, vit_b_runs, manifest, output):
+    generators = sorted({row['generator'] for row in manifest})
+    metrics = [(metric, metric) for metric in METHOD_LABELS if '_even_' not in metric]
+    metrics.extend((f'block_cls_gram_{score}', f'block_cls_gram_even_{score}')
+                   for score in ('cos', 'l1', 'norm_drop'))
+    comparison = []
+    for (_, cfg_l), aurocs_l, (run_b, cfg_b) in zip(runs, results, vit_b_runs):
+        aurocs_b = analyze_run(run_b, cfg_b, manifest, save_reports=False)
+        for view in cfg_l['views']:
+            for metric_b, metric_l in metrics:
+                values_b = {g: aurocs_b[view, metric_b, g] for g in [*generators, MACRO]}
+                values_l = {g: aurocs_l[view, metric_l, g] for g in [*generators, MACRO]}
+                for values in (values_b, values_l):
+                    values['worst'] = min(values[g] for g in generators)
+                for generator, value_b in values_b.items():
+                    value_l = values_l[generator]
+                    comparison.append(dict(size=cfg_l['size'], view=view, metric_vit_b=metric_b,
+                                           metric_vit_l=metric_l, generator=generator, auroc_vit_b=value_b,
+                                           auroc_vit_l=value_l, delta_vit_l_minus_b=value_l - value_b))
+    path = output / 'backbone_comparison.csv'
+    write_csv(path, ['size', 'view', 'metric_vit_b', 'metric_vit_l', 'generator',
+                     'auroc_vit_b', 'auroc_vit_l', 'delta_vit_l_minus_b'], comparison)
+    print(f'\nMatched ViT-B / ViT-L comparison: {path}')
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--run', type=Path, nargs='+', required=True, help='One run or the matched 224 and 512 Gram runs')
     parser.add_argument('--rigid-run', type=Path, help='Optional matched official RIGID run for comparison')
+    parser.add_argument('--vit-b-run', type=Path, nargs='+', help='ViT-B references for the selected ViT-L sizes')
     args = parser.parse_args()
     if len(args.run) > 2:
         parser.error('--run accepts one run or a matched pair')
@@ -216,15 +251,27 @@ def main():
         (small, cfg_small), (large, cfg_large) = runs
         if (cfg_small['size'], cfg_large['size']) != (224, 512):
             raise ValueError('Resolution comparison requires one 224 run and one 512 run')
-        matched = ('transforms', 'score_schema', 'model_id', 'model_revision', 'resize', 'noise_space', 'noise_std',
-                   'noise_seed_view', 'seed', 'block_cls_source', 'num_blocks', 'patch_size', 'metrics',
-                   'primary_metrics', 'views', 'exif_transpose', 'blur_sigma_at_224', 'blur_kernel_radius_sigmas',
-                   'downsample_scale', 'down_up_interpolation', 'wavelet_strength')
+        matched = (*GRAM_PROTOCOL, 'transforms', 'score_schema', 'model_id', 'model_revision', 'num_blocks',
+                   'metrics', 'primary_metrics', 'block_cls_gram_subset_blocks')
         differing = [key for key in matched if cfg_small.get(key) != cfg_large.get(key)]
         if differing:
             raise ValueError('Resolution comparison settings differ in ' + ', '.join(differing))
         if manifest != read_manifest(large):
             raise ValueError('Resolution comparison requires the same manifest at both sizes')
+
+    if args.vit_b_run:
+        vit_b_runs = sorted((load_run(run) for run in args.vit_b_run), key=lambda item: item[1]['size'])
+        if [cfg['size'] for _, cfg in vit_b_runs] != [cfg['size'] for _, cfg in runs]:
+            parser.error('--vit-b-run requires one ViT-B run per ViT-L resolution')
+        for (_, cfg_l), (run_b, cfg_b) in zip(runs, vit_b_runs):
+            if (cfg_l['model_id'], cfg_b['model_id']) != (VIT_L_ID, VIT_B_ID):
+                parser.error('--vit-b-run compares ViT-L inputs to --run with ViT-B references')
+            differing = [key for key in (*GRAM_PROTOCOL, 'score_schema', 'blur_sigma')
+                         if cfg_l.get(key) != cfg_b.get(key)]
+            if differing:
+                raise ValueError('Backbone comparison settings differ in ' + ', '.join(differing))
+            if manifest != read_manifest(run_b):
+                raise ValueError('Backbone comparison requires the same manifest for ViT-B and ViT-L')
 
     if args.rigid_run:
         rigid_run, rigid_config = load_run(args.rigid_run)
@@ -260,6 +307,9 @@ def main():
                   ['size', 'view', 'metric', 'generator', 'auroc', 'official_rigid_auroc', 'delta_vs_official_rigid'], comparison)
         print(f'\nOfficial RIGID macro AUROC: {rigid["official_rigid", FINAL_CLS, MACRO]:.4f}')
         print(f'Matched official RIGID comparison: {output / "official_rigid_comparison.csv"}')
+
+    if args.vit_b_run:
+        compare_backbones(runs, results, vit_b_runs, manifest, output)
 
 
 if __name__ == '__main__':

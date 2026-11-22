@@ -29,14 +29,26 @@ RIGID_MODEL = 'dinov2_vitl14'
 CLS_METRIC = 'cls_cosine_change'
 GRAM_METRICS = ['patch_gram_cos', 'block_cls_gram_cos', 'patch_gram_l1',
                 'block_cls_gram_l1', 'block_cls_gram_norm_drop']
+EVEN_GRAM_METRICS = ['block_cls_gram_even_cos', 'block_cls_gram_even_l1', 'block_cls_gram_even_norm_drop']
 
 
-def gram_batch_scores(model, images, rows, seed, noise_std, blur_sigma):
+def block_gram_change(original, original_norm, perturbed_cls):
+    perturbed = upper_gram(perturbed_cls)
+    cosine, l1 = gram_distances(original, perturbed)
+    norm_drop = 1 - perturbed.double().norm(dim=-1) / original_norm
+    return cosine, l1, norm_drop
+
+
+def gram_batch_scores(model, images, rows, seed, noise_std, blur_sigma, *, even_blocks=False):
     normalized = (images - model.mean) / model.std
     patches, final_cls, block_cls = model.forward_with_block_cls(normalized)
     patch_gram = upper_gram(patches)
     block_gram = upper_gram(block_cls)
     block_norm = block_gram.double().norm(dim=-1)
+    if even_blocks:
+        # Zero-based indices 1, 3, ..., 23 select blocks 2, 4, ..., 24.
+        even_gram = upper_gram(block_cls[:, 1::2])
+        even_norm = even_gram.double().norm(dim=-1)
     del patches
 
     for view in GRAM_VIEWS:
@@ -60,14 +72,14 @@ def gram_batch_scores(model, images, rows, seed, noise_std, blur_sigma):
 
         patches_t, final_cls_t, block_cls_t = model.forward_with_block_cls(altered)
         patch_cos, patch_l1 = gram_distances(patch_gram, upper_gram(patches_t))
-        block_gram_t = upper_gram(block_cls_t)
-        block_cos, block_l1 = gram_distances(block_gram, block_gram_t)
-        norm_drop = 1 - block_gram_t.double().norm(dim=-1) / block_norm
+        block_cos, block_l1, norm_drop = block_gram_change(block_gram, block_norm, block_cls_t)
         final_cos = 1 - F.cosine_similarity(final_cls, final_cls_t, dim=-1)
         direct_block_cos = 1 - F.cosine_similarity(block_cls, block_cls_t, dim=-1)
+        columns = [final_cos, patch_cos, block_cos, patch_l1, block_l1, norm_drop, direct_block_cos]
+        if even_blocks:
+            columns.extend(block_gram_change(even_gram, even_norm, block_cls_t[:, 1::2]))
         del patches_t, altered
-        yield view, torch.column_stack((final_cos, patch_cos, block_cos, patch_l1,
-                                        block_l1, norm_drop, direct_block_cos)).cpu().tolist()
+        yield view, torch.column_stack(columns).cpu().tolist()
 
 
 def official_rigid_batch_scores(model, images, noise_std):
@@ -94,7 +106,9 @@ def main():
     parser.add_argument('--threads', type=int, default=2)
     parser.add_argument('--seed', type=int, help='Defaults to 42 for Gram and 100 for official RIGID')
     parser.add_argument('--noise-std', type=float, default=0.05)
-    parser.add_argument('--official-rigid', action='store_true', help='Run the DINOv2 ViT-L/14 RIGID baseline')
+    model_mode = parser.add_mutually_exclusive_group()
+    model_mode.add_argument('--backbone', choices=('vit-b', 'vit-l'), help='DINOv3 backbone (default: vit-b)')
+    model_mode.add_argument('--official-rigid', action='store_true', help='Run the DINOv2 ViT-L/14 RIGID baseline')
     parser.add_argument('--manifest', help='Use an existing manifest instead of selecting images')
     args = parser.parse_args()
     if Path(args.name).name != args.name or args.name in ('', '.', '..'):
@@ -135,6 +149,7 @@ def main():
     config = dict(vars(args), score_schema=2, resize='bilinear',
                   noise_space='imagenet_normalized_unclipped', exif_transpose=not args.official_rigid)
     blur_sigma = BLUR_SIGMA_AT_224 * args.size / 224
+    even_blocks = args.backbone == 'vit-l'
     if args.official_rigid:
         torch.manual_seed(args.seed)
         torch.backends.cudnn.deterministic = True
@@ -146,15 +161,22 @@ def main():
         config.update(transforms='official_rigid', model_id=RIGID_MODEL,
                       model_revision=RIGID_REVISION, noise_rng='torch_global')
     else:
-        from backbone import Backbone, MODEL_ID, REVISION
+        from backbone import Backbone
 
-        model = Backbone(args.device)
+        backbone_name = args.backbone or 'vit-b'
+        model = Backbone(args.device, backbone=backbone_name)
         num_blocks = model.model.config.num_hidden_layers
         if num_blocks < 2:
             raise ValueError('Expected at least two transformer blocks for a CLS Gram')
+        if even_blocks and num_blocks != 24:
+            raise ValueError('ViT-L must have 24 blocks for the 12-block Gram comparison')
         views = GRAM_VIEWS
         metrics = [CLS_METRIC, *GRAM_METRICS, *(f'block_{i:02d}_cos' for i in range(1, num_blocks + 1))]
-        config.update(transforms='gram', model_id=MODEL_ID, model_revision=REVISION, num_blocks=num_blocks,
+        if even_blocks:
+            metrics.extend(EVEN_GRAM_METRICS)
+            config['block_cls_gram_subset_blocks'] = list(range(2, num_blocks + 1, 2))
+        config.update(transforms='gram', backbone=backbone_name, model_id=model.model_id,
+                      model_revision=model.revision, num_blocks=num_blocks,
                       patch_size=model.model.config.patch_size, block_cls_source='post_block_pre_final_layernorm',
                       noise_seed_view=NOISE_VIEW, blur_sigma_at_224=BLUR_SIGMA_AT_224, blur_sigma=blur_sigma,
                       blur_kernel_radius_sigmas=3, downsample_scale=DOWNSAMPLE_SCALE,
@@ -183,7 +205,8 @@ def main():
             if args.official_rigid:
                 batch_scores = official_rigid_batch_scores(model, images, args.noise_std)
             else:
-                batch_scores = gram_batch_scores(model, images, batch_rows, args.seed, args.noise_std, blur_sigma)
+                batch_scores = gram_batch_scores(model, images, batch_rows, args.seed, args.noise_std,
+                                                 blur_sigma, even_blocks=even_blocks)
             for view, values in batch_scores:
                 writer.writerows({**row, 'view': view, **dict(zip(metrics, scores))}
                                  for row, scores in zip(batch_rows, values))

@@ -4,12 +4,18 @@ from transformers import AutoImageProcessor, AutoModel
 
 MODEL_ID = 'facebook/dinov3-vitb16-pretrain-lvd1689m'
 REVISION = '5931719e67bbdb9737e363e781fb0c67687896bc'
+DINO_BACKBONES = {
+    'vit-b': (MODEL_ID, REVISION),
+    'vit-l': ('facebook/dinov3-vitl16-pretrain-lvd1689m', 'ea8dc2863c51be0a264bab82070e3e8836b02d51'),
+}
 
 
 class Backbone:
-    def __init__(self, device):
+    def __init__(self, device, *, backbone='vit-b'):
         self.device = device
-        snapshot = snapshot_download(MODEL_ID, revision=REVISION, allow_patterns=['*.json', '*.safetensors'])
+        self.model_id, self.revision = DINO_BACKBONES[backbone]
+        snapshot = snapshot_download(self.model_id, revision=self.revision,
+                                     allow_patterns=['*.json', '*.safetensors'])
         processor = AutoImageProcessor.from_pretrained(snapshot, local_files_only=True)
         mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
         if len(processor.image_mean) != 3 or len(processor.image_std) != 3 or any(abs(a-b) > 1e-7 for a,b in zip(processor.image_mean, mean)) or any(abs(a-b) > 1e-7 for a,b in zip(processor.image_std, std)):
