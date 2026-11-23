@@ -12,20 +12,17 @@ from dotenv import load_dotenv
 from torch.utils.data import DataLoader
 from torchvision.transforms.functional import gaussian_blur
 
-from dataset import Images, select_images
+from backbone import DINOV2_REVISION, DINOV2_VITL14, IMAGENET_MEAN, IMAGENET_STD, load_dinov2_vitl14
+from dataset import Images, MANIFEST_FIELDS, read_image_manifest, select_images
 from metrics import gram_distances, upper_gram
 from transforms import haar_attenuate, rigid_transform
 
 
-MANIFEST_FIELDS = ['path', 'generator', 'label', 'class_name']
 NOISE_VIEW = 'rigid_noise'
 GRAM_VIEWS = [NOISE_VIEW, 'gaussian_blur', 'down_up', 'wavelet']
 BLUR_SIGMA_AT_224 = 1.0
 DOWNSAMPLE_SCALE = 0.75
 WAVELET_STRENGTH = 0.5
-RIGID_REPO = 'facebookresearch/dinov2'
-RIGID_REVISION = 'b194f00db6136677fc8a4cc2ef2168f7699dfba2'
-RIGID_MODEL = 'dinov2_vitl14'
 CLS_METRIC = 'cls_cosine_change'
 GRAM_METRICS = ['patch_gram_cos', 'block_cls_gram_cos', 'patch_gram_l1',
                 'block_cls_gram_l1', 'block_cls_gram_norm_drop']
@@ -83,8 +80,8 @@ def gram_batch_scores(model, images, rows, seed, noise_std, blur_sigma, *, even_
 
 
 def official_rigid_batch_scores(model, images, noise_std):
-    mean = images.new_tensor([.485, .456, .406])[None, :, None, None]
-    std = images.new_tensor([.229, .224, .225])[None, :, None, None]
+    mean = images.new_tensor(IMAGENET_MEAN)[None, :, None, None]
+    std = images.new_tensor(IMAGENET_STD)[None, :, None, None]
     original = ((images - mean) / std).contiguous()
     cls = model(original)
     altered = original + noise_std * torch.randn_like(original)
@@ -130,16 +127,10 @@ def main():
 
     torch.set_num_threads(args.threads)
     if args.manifest:
-        with Path(args.manifest).open(newline='', encoding='utf-8-sig') as f:
-            reader = csv.DictReader(f)
-            if reader.fieldnames != MANIFEST_FIELDS:
-                parser.error('manifest columns must be ' + ', '.join(MANIFEST_FIELDS))
-            rows = list(reader)
-        if not rows or any(not row['path'] or not row['generator'] or row['label'] not in ('real', 'fake')
-                           or row['class_name'] is None or None in row for row in rows):
-            parser.error('manifest requires valid image rows')
-        if len({(row['path'], row['generator'], row['label']) for row in rows}) != len(rows):
-            parser.error('manifest contains duplicate image rows')
+        try:
+            rows = read_image_manifest(args.manifest)
+        except ValueError as error:
+            parser.error(str(error))
     else:
         rows = select_images(args.data_root, samples, args.seed, args.generators)
 
@@ -154,12 +145,11 @@ def main():
         torch.manual_seed(args.seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
-        model = torch.hub.load(f'{RIGID_REPO}:{RIGID_REVISION}', RIGID_MODEL,
-                               trust_repo=True, skip_validation=True).requires_grad_(False).eval().to(args.device)
+        model = load_dinov2_vitl14(args.device)
         views = ['official_rigid']
         metrics = [CLS_METRIC]
-        config.update(transforms='official_rigid', model_id=RIGID_MODEL,
-                      model_revision=RIGID_REVISION, noise_rng='torch_global')
+        config.update(transforms='official_rigid', model_id=DINOV2_VITL14,
+                      model_revision=DINOV2_REVISION, noise_rng='torch_global')
     else:
         from backbone import Backbone
 

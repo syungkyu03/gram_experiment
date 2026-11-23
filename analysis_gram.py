@@ -57,7 +57,8 @@ MANIFEST_FIELDS = ('path', 'generator', 'label', 'class_name')
 FINAL_CLS = 'cls_cosine_change'
 MACRO = 'macro'
 VIEW_LABELS = {'rigid_noise': 'Gaussian noise', 'gaussian_blur': 'Gaussian blur',
-               'down_up': 'Down / upsample', 'wavelet': 'Haar wavelet', 'official_rigid': 'Official RIGID'}
+               'down_up': 'Down / upsample', 'wavelet': 'Haar wavelet',
+               'official_rigid': 'Official RIGID', 'warpad': 'WaRPAD'}
 METHOD_LABELS = {FINAL_CLS: 'Final CLS', 'patch_gram_cos': 'Patch Gram cosine',
                  'block_cls_gram_cos': 'CLS Gram cosine', 'patch_gram_l1': 'Patch Gram L1',
                  'block_cls_gram_l1': 'CLS Gram L1', 'block_cls_gram_norm_drop': 'CLS Gram norm drop',
@@ -207,8 +208,8 @@ def analyze_run(run, config, manifest, *, save_reports=True):
 def load_run(run):
     config = json.loads((run / 'config.json').read_text(encoding='utf-8'))
     kind = config.get('transforms'), config.get('score_schema')
-    if kind not in (('gram', 1), ('gram', 2), ('official_rigid', 2)):
-        raise ValueError(f'{run} is not a supported Gram or official RIGID run')
+    if kind not in (('gram', 1), ('gram', 2), ('official_rigid', 2), ('warpad', 2)):
+        raise ValueError(f'{run} is not a supported Gram, official RIGID, or WaRPAD run')
     return run, config
 
 
@@ -275,8 +276,8 @@ def main():
 
     if args.rigid_run:
         rigid_run, rigid_config = load_run(args.rigid_run)
-        if rigid_config['transforms'] != 'official_rigid' or any(cfg['transforms'] != 'gram' for _, cfg in runs):
-            parser.error('--rigid-run requires an official RIGID run and Gram inputs to --run')
+        if rigid_config['transforms'] != 'official_rigid' or any(cfg['transforms'] not in ('gram', 'warpad') for _, cfg in runs):
+            parser.error('--rigid-run requires an official RIGID run and Gram or WaRPAD inputs to --run')
         if manifest != read_manifest(rigid_run):
             raise ValueError('Official RIGID comparison requires the same manifest as the Gram runs')
 

@@ -1,4 +1,5 @@
 from pathlib import Path
+import csv
 import random
 from collections import defaultdict
 
@@ -8,6 +9,21 @@ import numpy as np
 import torch
 
 EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.bmp'}
+MANIFEST_FIELDS = ['path', 'generator', 'label', 'class_name']
+
+
+def read_image_manifest(path):
+    with Path(path).open(newline='', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames != MANIFEST_FIELDS:
+            raise ValueError('manifest columns must be ' + ', '.join(MANIFEST_FIELDS))
+        rows = list(reader)
+    if not rows or any(not row['path'] or not row['generator'] or row['label'] not in ('real', 'fake')
+                       or row['class_name'] is None or None in row for row in rows):
+        raise ValueError('manifest requires valid image rows')
+    if len({(row['path'], row['generator'], row['label']) for row in rows}) != len(rows):
+        raise ValueError('manifest contains duplicate image rows')
+    return rows
 
 
 def select_images(root, samples, seed, generators='all', excluded=None):
